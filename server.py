@@ -20,6 +20,16 @@ PASSWORD = os.environ.get("INPI_API_PASSWORD")
 RDAP_URL = "https://rdap.org/domain/{domain}"
 DEFAULT_TLDS = ["com", "fr", "net", "io", "eu"]
 
+# rdap.org route selon le registre bootstrap officiel de l'IANA
+# (data.iana.org/rdap/dns.json), qui ne couvre pas tous les TLD (ex. .io,
+# .eu en sont absents) : pour ces TLD, rdap.org renvoie un 404 "sec" (sans
+# redirection) qui NE VEUT PAS DIRE que le domaine est libre. On court-circuite
+# ces cas avec un serveur RDAP connu quand on en a un ; sinon on répond
+# 'unknown' plutôt que de mentir.
+RDAP_TLD_OVERRIDES = {
+    "io": "https://rdap.identitydigital.services/rdap/domain/{domain}",
+}
+
 _session = None
 
 
@@ -35,14 +45,31 @@ def slugify_domain_label(nom: str) -> str:
 def check_domain(domain: str) -> str:
     """Interroge le RDAP (successeur du WHOIS, gratuit, sans clé) pour un
     domaine. Renvoie 'available', 'taken' ou 'unknown'."""
+    tld = domain.rsplit(".", 1)[-1]
+    override_url = RDAP_TLD_OVERRIDES.get(tld)
+
     try:
+        if override_url:
+            r = requests.get(override_url.format(domain=domain), timeout=8, allow_redirects=True)
+            if r.status_code == 404:
+                return "available"
+            if r.status_code == 200:
+                return "taken"
+            return "unknown"
+
         r = requests.get(RDAP_URL.format(domain=domain), timeout=8, allow_redirects=True)
     except requests.RequestException:
         return "unknown"
-    if r.status_code == 404:
-        return "available"
+
     if r.status_code == 200:
         return "taken"
+    if r.status_code == 404:
+        if not r.history:
+            # rdap.org n'a pas redirigé vers un vrai serveur de registre :
+            # le TLD n'est probablement pas dans le bootstrap IANA, donc ce
+            # 404 ne prouve rien sur la disponibilité réelle du domaine.
+            return "unknown"
+        return "available"
     return "unknown"
 
 
