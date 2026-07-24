@@ -148,6 +148,32 @@
   .badge.registered { background: var(--ok-bg); color: var(--ok-text); }
   .badge.pending { background: var(--warn-bg); color: var(--warn-text); }
   .badge.other { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+  .badge.available { background: var(--ok-bg); color: var(--ok-text); }
+  .badge.taken { background: var(--warn-bg); color: var(--warn-text); }
+  .badge.unknown { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+
+  #domains-section {
+    margin: 1.5rem 0;
+  }
+  #domains-section h2 {
+    font-size: 1rem;
+    margin: 0 0 0.6rem;
+  }
+  .domain-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .domain-chip {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.88rem;
+  }
 
   .empty {
     text-align: center;
@@ -190,11 +216,22 @@
       <input type="checkbox" id="with_classes">
       <label for="with_classes">Classes de Nice (plus lent)</label>
     </div>
+    <div class="field">
+      <label for="tlds">Extensions de domaine</label>
+      <input type="text" id="tlds" name="tlds" placeholder="com, fr, net, io, eu">
+    </div>
     <button type="submit" id="submit-btn">Rechercher</button>
   </form>
 
   <div id="status"></div>
   <div id="summary"></div>
+
+  <div id="domains-section" style="display:none">
+    <h2>Disponibilité des noms de domaine</h2>
+    <div id="domains-status" style="color:var(--muted); font-size:0.85rem; margin-bottom:0.5rem;"></div>
+    <div class="domain-grid" id="domains-results"></div>
+  </div>
+
   <div id="results"></div>
 </main>
 
@@ -204,6 +241,9 @@ const statusEl = document.getElementById('status');
 const summaryEl = document.getElementById('summary');
 const resultsEl = document.getElementById('results');
 const submitBtn = document.getElementById('submit-btn');
+const domainsSectionEl = document.getElementById('domains-section');
+const domainsStatusEl = document.getElementById('domains-status');
+const domainsResultsEl = document.getElementById('domains-results');
 
 function statusBadge(status) {
   const s = (status || '').toLowerCase();
@@ -211,6 +251,38 @@ function statusBadge(status) {
   if (s.includes('registered') || s.includes('enregistr')) cls = 'registered';
   else if (s.includes('pending') || s.includes('examination') || s.includes('filed') || s.includes('publi')) cls = 'pending';
   return `<span class="badge ${cls}">${escapeHtml(status || '?')}</span>`;
+}
+
+function domainLabel(status) {
+  if (status === 'available') return 'Libre';
+  if (status === 'taken') return 'Pris';
+  return 'Inconnu';
+}
+
+async function runDomainsCheck(nom, tlds) {
+  domainsSectionEl.style.display = '';
+  domainsStatusEl.textContent = 'Vérification en cours…';
+  domainsResultsEl.innerHTML = '';
+
+  const params = new URLSearchParams({ nom });
+  if (tlds) params.set('tlds', tlds);
+
+  try {
+    const res = await fetch(`/naming-tool-api/domains?${params.toString()}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      domainsStatusEl.textContent = data.error || `Erreur (HTTP ${res.status})`;
+      return;
+    }
+
+    domainsStatusEl.textContent = '';
+    domainsResultsEl.innerHTML = data.results.map(r =>
+      `<div class="domain-chip">${escapeHtml(r.domain)} <span class="badge ${r.status}">${domainLabel(r.status)}</span></div>`
+    ).join('');
+  } catch (err) {
+    domainsStatusEl.textContent = 'Erreur réseau : ' + err.message;
+  }
 }
 
 function escapeHtml(str) {
@@ -226,6 +298,7 @@ form.addEventListener('submit', async (e) => {
   const exact = document.getElementById('exact').checked;
   const withClasses = document.getElementById('with_classes').checked;
   const classesFilter = document.getElementById('classes').value.trim();
+  const tlds = document.getElementById('tlds').value.trim();
 
   submitBtn.disabled = true;
   statusEl.className = '';
@@ -234,6 +307,8 @@ form.addEventListener('submit', async (e) => {
     : 'Recherche en cours…';
   summaryEl.textContent = '';
   resultsEl.innerHTML = '';
+
+  runDomainsCheck(nom, tlds);
 
   const params = new URLSearchParams({
     nom,
