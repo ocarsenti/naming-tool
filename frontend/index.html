@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naming Tool — Disponibilité de marque (INPI)</title>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --border: #e2e2e6;
+    --text: #1c1c1f;
+    --muted: #6b6b74;
+    --accent: #2b6cee;
+    --accent-hover: #1f57c9;
+    --danger: #c0392b;
+    --ok-bg: #eef6ec;
+    --ok-text: #2f7a3c;
+    --warn-bg: #fdf1ea;
+    --warn-text: #b5560f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121214;
+      --panel: #1b1b1e;
+      --border: #2c2c31;
+      --text: #ececef;
+      --muted: #9a9aa3;
+      --accent: #5b8def;
+      --accent-hover: #7ba3f2;
+      --ok-bg: #17301c;
+      --ok-text: #7fd694;
+      --warn-bg: #332211;
+      --warn-text: #eab27a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem 1rem 4rem;
+  }
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+  }
+  p.subtitle {
+    color: var(--muted);
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+  }
+  form {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.25rem;
+    align-items: flex-end;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .field.grow { flex: 1 1 240px; }
+  label {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  input[type="text"] {
+    font-size: 1rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  input[type="text"]:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .checkbox-field {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .checkbox-field label { font-size: 0.85rem; color: var(--text); }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 0.6rem 1.3rem;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.6; cursor: default; }
+
+  #status {
+    margin: 1rem 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+    min-height: 1.2em;
+  }
+  #status.error { color: var(--danger); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 0.88rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+  .badge.registered { background: var(--ok-bg); color: var(--ok-text); }
+  .badge.pending { background: var(--warn-bg); color: var(--warn-text); }
+  .badge.other { background: var(--bg); color: var(--muted); border: 1px solid var(--border); }
+
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 2.5rem 1rem;
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+  }
+
+  #summary {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 0.75rem 0;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vérification de disponibilité de marque</h1>
+  <p class="subtitle">Recherche dans la base INPI (marques FR / EU / WO).</p>
+
+  <form id="search-form">
+    <div class="field grow">
+      <label for="nom">Nom de marque</label>
+      <input type="text" id="nom" name="nom" placeholder="ex. Nike" required autofocus>
+    </div>
+    <div class="field">
+      <label for="classes">Classes de Nice (filtre)</label>
+      <input type="text" id="classes" name="classes" placeholder="ex. 9, 41, 42">
+    </div>
+    <div class="field checkbox-field">
+      <input type="checkbox" id="exact">
+      <label for="exact">Correspondance exacte</label>
+    </div>
+    <div class="field checkbox-field">
+      <input type="checkbox" id="with_classes">
+      <label for="with_classes">Classes de Nice (plus lent)</label>
+    </div>
+    <button type="submit" id="submit-btn">Rechercher</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="summary"></div>
+  <div id="results"></div>
+</main>
+
+<script>
+const form = document.getElementById('search-form');
+const statusEl = document.getElementById('status');
+const summaryEl = document.getElementById('summary');
+const resultsEl = document.getElementById('results');
+const submitBtn = document.getElementById('submit-btn');
+
+function statusBadge(status) {
+  const s = (status || '').toLowerCase();
+  let cls = 'other';
+  if (s.includes('registered') || s.includes('enregistr')) cls = 'registered';
+  else if (s.includes('pending') || s.includes('examination') || s.includes('filed') || s.includes('publi')) cls = 'pending';
+  return `<span class="badge ${cls}">${escapeHtml(status || '?')}</span>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str ?? '';
+  return div.innerHTML;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nom = document.getElementById('nom').value.trim();
+  if (!nom) return;
+  const exact = document.getElementById('exact').checked;
+  const withClasses = document.getElementById('with_classes').checked;
+  const classesFilter = document.getElementById('classes').value.trim();
+
+  submitBtn.disabled = true;
+  statusEl.className = '';
+  statusEl.textContent = withClasses
+    ? 'Recherche en cours (classes de Nice : peut prendre du temps)…'
+    : 'Recherche en cours…';
+  summaryEl.textContent = '';
+  resultsEl.innerHTML = '';
+
+  const params = new URLSearchParams({
+    nom,
+    exact: exact ? 'true' : 'false',
+    with_classes: withClasses ? 'true' : 'false',
+  });
+  if (classesFilter) params.set('classes', classesFilter);
+
+  try {
+    const res = await fetch(`/naming-tool-api/search?${params.toString()}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      statusEl.className = 'error';
+      statusEl.textContent = data.error || `Erreur (HTTP ${res.status})`;
+      return;
+    }
+
+    statusEl.textContent = '';
+    summaryEl.textContent = `${data.count} résultat(s) affiché(s) sur ${data.total} pour « ${data.nom} ».`;
+
+    if (data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">Aucune marque trouvée.</div>';
+      return;
+    }
+
+    const showClasses = withClasses;
+    let html = '<div class="table-wrap"><table><thead><tr>' +
+      '<th>Marque</th><th>N° dossier</th><th>Statut</th><th>Déposant</th>' +
+      (showClasses ? '<th>Classes</th>' : '') +
+      '</tr></thead><tbody>';
+
+    for (const r of data.results) {
+      html += '<tr>' +
+        `<td>${escapeHtml(r.mark)}</td>` +
+        `<td>${escapeHtml(r.application_number)}</td>` +
+        `<td>${statusBadge(r.status)}</td>` +
+        `<td>${escapeHtml(r.deposant)}</td>` +
+        (showClasses ? `<td>${r.classes && r.classes.length ? escapeHtml(r.classes.join(', ')) : '—'}</td>` : '') +
+        '</tr>';
+    }
+    html += '</tbody></table></div>';
+    resultsEl.innerHTML = html;
+  } catch (err) {
+    statusEl.className = 'error';
+    statusEl.textContent = 'Erreur réseau : ' + err.message;
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
