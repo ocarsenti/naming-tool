@@ -29,10 +29,24 @@ LOGIN_URL = f"{BASE}/auth/login"
 SEARCH_URL = f"{BASE}/services/apidiffusion/api/marques/search"
 
 
+DEBUG = os.environ.get("INPI_DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def _debug(label: str, r: requests.Response) -> None:
+    if not DEBUG:
+        return
+    print(f"[DEBUG] {label}: HTTP {r.status_code}", file=sys.stderr)
+    print(f"[DEBUG] {label} headers: {dict(r.headers)}", file=sys.stderr)
+    print(f"[DEBUG] {label} cookies après appel: {dict(r.cookies)} / session: {dict(r.request._cookies if hasattr(r.request, '_cookies') else {})}", file=sys.stderr)
+    body = r.text[:500]
+    print(f"[DEBUG] {label} body (500 premiers car.): {body}", file=sys.stderr)
+
+
 def login(session: requests.Session, username: str, password: str) -> None:
     """Réalise le flow d'auth INPI : récupère un XSRF-TOKEN puis se logue
     pour obtenir access_token / session_token (stockés comme cookies)."""
-    session.get(AUTHENTICATE_URL, verify=True, timeout=15)
+    r0 = session.get(AUTHENTICATE_URL, verify=True, timeout=15)
+    _debug("GET authenticate", r0)
     xsrf = session.cookies.get("XSRF-TOKEN")
     if not xsrf:
         raise RuntimeError("Pas de XSRF-TOKEN reçu — vérifie que l'endpoint d'auth n'a pas changé.")
@@ -48,12 +62,17 @@ def login(session: requests.Session, username: str, password: str) -> None:
         headers=headers,
         timeout=15,
     )
+    _debug("POST login", r)
     if r.status_code != 200:
         raise RuntimeError(
             f"Échec de connexion à l'API INPI (HTTP {r.status_code}). "
-            "Vérifie INPI_API_USER / INPI_API_PASSWORD et que l'accès "
-            "'API Marques' est bien activé sur ton compte data.inpi.fr."
+            "Vérifie INPI_API_USER / INPI_API_PASSWORD (ce doivent être les "
+            "identifiants du COMPTE TECHNIQUE généré lors de l'activation "
+            "'Accès APIs PI' — pas ceux de connexion habituels à data.inpi.fr) "
+            "et que l'accès 'API Marques' est bien activé."
         )
+    if DEBUG:
+        print(f"[DEBUG] cookies de session après login: {dict(session.cookies)}", file=sys.stderr)
 
 
 def build_query(nom: str, classes, exact: bool) -> str:
@@ -87,6 +106,7 @@ def search_marque(session, nom, collections, classes, exact, size=50):
         "size": size,
     }
     r = session.post(SEARCH_URL, json=payload, headers=headers, timeout=20)
+    _debug("POST search", r)
     r.raise_for_status()
     return r.json()
 
