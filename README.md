@@ -14,6 +14,10 @@ pip install -r requirements.txt
 cp .env.example .env   # puis renseigne les clés dont tu as besoin
 ```
 
+La vérification de domaine (`server.py`, endpoint `/domains`) s'appuie sur le
+RDAP et, en repli pour les TLD non couverts (ex. `.eu`), sur la commande
+système `whois` (paquet `whois` sur Debian/Ubuntu : `apt install whois`).
+
 ## 1. `check_marque_inpi.py` — Base marques (INPI)
 
 Interroge l'API officielle "API PI Marques" de l'INPI (bases FR / EU / WO) et

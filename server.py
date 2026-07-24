@@ -4,6 +4,7 @@ le frontend statique (frontend/index.html)."""
 
 import os
 import re
+import subprocess
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
@@ -30,6 +31,29 @@ RDAP_TLD_OVERRIDES = {
     "io": "https://rdap.identitydigital.services/rdap/domain/{domain}",
 }
 
+# Repli WHOIS (port 43, commande système `whois`) pour les TLD que le RDAP
+# ne sait pas trancher. Format de sortie non standardisé selon le registre :
+# heuristique best-effort par motifs de texte plutôt que parsing strict.
+WHOIS_NOT_FOUND_PATTERNS = (
+    "no match for",
+    "not found",
+    "no data found",
+    "no entries found",
+    "no object found",
+    "status: available",
+    "status: free",
+    "is available for registration",
+    "no matching record",
+)
+WHOIS_TAKEN_HINTS = (
+    "creation date",
+    "registrar:",
+    "registrant",
+    "name server",
+    "domain name:",
+    "domain:",
+)
+
 _session = None
 
 
@@ -42,35 +66,49 @@ def slugify_domain_label(nom: str) -> str:
     return label.strip("-")
 
 
+def check_domain_whois(domain: str) -> str:
+    """Repli WHOIS quand le RDAP n'a pas pu trancher (TLD hors bootstrap
+    IANA, erreur réseau...). Renvoie 'available', 'taken' ou 'unknown'."""
+    try:
+        proc = subprocess.run(
+            ["whois", domain], capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return "unknown"
+
+    output = proc.stdout.lower()
+    if not output.strip():
+        return "unknown"
+    if any(p in output for p in WHOIS_NOT_FOUND_PATTERNS):
+        return "available"
+    if any(p in output for p in WHOIS_TAKEN_HINTS):
+        return "taken"
+    return "unknown"
+
+
 def check_domain(domain: str) -> str:
     """Interroge le RDAP (successeur du WHOIS, gratuit, sans clé) pour un
-    domaine. Renvoie 'available', 'taken' ou 'unknown'."""
+    domaine, avec repli WHOIS si le RDAP ne peut pas trancher. Renvoie
+    'available', 'taken' ou 'unknown'."""
     tld = domain.rsplit(".", 1)[-1]
     override_url = RDAP_TLD_OVERRIDES.get(tld)
 
     try:
-        if override_url:
-            r = requests.get(override_url.format(domain=domain), timeout=8, allow_redirects=True)
-            if r.status_code == 404:
-                return "available"
-            if r.status_code == 200:
-                return "taken"
-            return "unknown"
-
-        r = requests.get(RDAP_URL.format(domain=domain), timeout=8, allow_redirects=True)
+        url = override_url.format(domain=domain) if override_url else RDAP_URL.format(domain=domain)
+        r = requests.get(url, timeout=8, allow_redirects=True)
     except requests.RequestException:
-        return "unknown"
+        return check_domain_whois(domain)
 
     if r.status_code == 200:
         return "taken"
     if r.status_code == 404:
-        if not r.history:
-            # rdap.org n'a pas redirigé vers un vrai serveur de registre :
-            # le TLD n'est probablement pas dans le bootstrap IANA, donc ce
-            # 404 ne prouve rien sur la disponibilité réelle du domaine.
-            return "unknown"
-        return "available"
-    return "unknown"
+        if override_url or r.history:
+            return "available"
+        # rdap.org n'a pas redirigé vers un vrai serveur de registre :
+        # le TLD n'est probablement pas dans le bootstrap IANA, donc ce
+        # 404 ne prouve rien sur la disponibilité réelle du domaine.
+        return check_domain_whois(domain)
+    return check_domain_whois(domain)
 
 
 def get_session() -> requests.Session:
