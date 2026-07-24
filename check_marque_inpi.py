@@ -13,11 +13,14 @@ Usage :
     python check_marque_inpi.py "NomDeMarque" --classes 9 41 42
     python check_marque_inpi.py "NomDeMarque" --exact          # match exact au lieu de "commence par"
     python check_marque_inpi.py "NomDeMarque" --collections FR EU
+    python check_marque_inpi.py "NomDeMarque" --with-classes  # ajoute les classes de Nice (plus lent)
 """
 
 import argparse
 import os
 import sys
+import xml.etree.ElementTree as ET
+
 import requests
 
 BASE = "https://api-gateway.inpi.fr"
@@ -29,8 +32,7 @@ SEARCH_URL = f"{BASE}/services/apidiffusion/api/marques/search"
 def login(session: requests.Session, username: str, password: str) -> None:
     """Réalise le flow d'auth INPI : récupère un XSRF-TOKEN puis se logue
     pour obtenir access_token / session_token (stockés comme cookies)."""
-    r = session.get(AUTHENTICATE_URL, verify=True, timeout=15)
-    r.raise_for_status()
+    session.get(AUTHENTICATE_URL, verify=True, timeout=15)
     xsrf = session.cookies.get("XSRF-TOKEN")
     if not xsrf:
         raise RuntimeError("Pas de XSRF-TOKEN reçu — vérifie que l'endpoint d'auth n'a pas changé.")
@@ -57,11 +59,14 @@ def login(session: requests.Session, username: str, password: str) -> None:
 def build_query(nom: str, classes, exact: bool) -> str:
     """Construit la requête au format SolR attendu par l'API INPI."""
     nom_clean = nom.strip().replace('"', "")
+    # Phrase toujours entre guillemets : un nom multi-mots non quoté est
+    # traité comme un OU entre mots-clés par l'API (matches massifs et
+    # non pertinents), même pour un seul mot un guillemet évite toute ambiguïté.
     if exact:
-        mark_clause = f"[Mark_Exp={nom_clean}]"
+        mark_clause = f'[Mark_Exp="{nom_clean}"]'
     else:
         # "commence par" — plus permissif pour repérer les variantes proches
-        mark_clause = f"[Mark_Exp={nom_clean}*]"
+        mark_clause = f'[Mark_Exp="{nom_clean}"*]'
 
     if classes:
         classes_expr = " OU ".join(classes)
@@ -86,34 +91,42 @@ def search_marque(session, nom, collections, classes, exact, size=50):
     return r.json()
 
 
-def format_results(nom: str, data: dict) -> str:
-    hits = data.get("result") or data.get("results") or data.get("hits") or data
-    records = None
-    for key in ("marks", "notices", "items", "hits", "content"):
-        if isinstance(hits, dict) and key in hits:
-            records = hits[key]
-            break
-    if records is None and isinstance(hits, list):
-        records = hits
+def fetch_classes(session: requests.Session, notice_href: str) -> list:
+    """Récupère les classes de Nice d'une marque via sa fiche détaillée (XML)."""
+    xsrf = session.cookies.get("XSRF-TOKEN")
+    headers = {"Accept": "application/xml, text/xml, */*", "X-XSRF-TOKEN": xsrf}
+    r = session.get(notice_href, headers=headers, timeout=20)
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    return [el.text for el in root.iter("ClassNumber") if el.text]
+
+
+def format_results(nom: str, data: dict, session: requests.Session = None) -> str:
+    records = data.get("results")
     if records is None:
         return f"Réponse brute (structure inattendue) :\n{data}"
 
     if not records:
         return f"Aucune marque trouvée pour « {nom} »."
 
-    lines = [f"{len(records)} résultat(s) pour « {nom} » :\n"]
+    total = data.get("metadata", {}).get("count", len(records))
+    lines = [f"{len(records)} résultat(s) affiché(s) sur {total} pour « {nom} » :\n"]
     for rec in records:
-        app_num = rec.get("ApplicationNumber") or rec.get("applicationNumber") or "?"
-        mark = rec.get("Mark") or rec.get("mark") or nom
-        status = rec.get("MarkCurrentStatusCode") or rec.get("status") or "?"
-        deposant = rec.get("DEPOSANT") or rec.get("deposant") or "?"
-        raw_classes = rec.get("ClassNumber") or rec.get("classNumber") or []
-        if isinstance(raw_classes, (str, int)):
-            raw_classes = [raw_classes]
-        classes_str = ", ".join(str(c) for c in raw_classes) if raw_classes else "?"
-        lines.append(
-            f"- {mark}  [{app_num}]  statut={status}  déposant={deposant}  classes={classes_str}"
-        )
+        field_map = {f["name"]: f.get("value") for f in rec.get("fields", [])}
+        app_num = field_map.get("ApplicationNumber") or rec.get("documentId") or "?"
+        mark = field_map.get("Mark") or nom
+        status = field_map.get("MarkCurrentStatusCode") or "?"
+        deposant = field_map.get("DEPOSANT") or "?"
+        line = f"- {mark}  [{app_num}]  statut={status}  déposant={deposant}"
+        if session is not None:
+            notice_href = (rec.get("xml") or {}).get("href")
+            if notice_href:
+                try:
+                    classes = fetch_classes(session, notice_href)
+                    line += f"  classes={', '.join(classes) if classes else '?'}"
+                except requests.HTTPError:
+                    line += "  classes=erreur"
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -126,6 +139,9 @@ def main():
                          help="Bases à interroger (FR, EU, WO). Défaut : les trois.")
     parser.add_argument("--exact", action="store_true",
                          help="Recherche exacte au lieu de 'commence par' (défaut).")
+    parser.add_argument("--with-classes", action="store_true",
+                         help="Récupère les classes de Nice pour chaque résultat "
+                              "(1 requête HTTP supplémentaire par marque, plus lent).")
     args = parser.parse_args()
 
     username = os.environ.get("INPI_API_USER")
@@ -145,7 +161,7 @@ def main():
     except RuntimeError as e:
         sys.exit(str(e))
 
-    print(format_results(args.nom, data))
+    print(format_results(args.nom, data, session if args.with_classes else None))
 
 
 if __name__ == "__main__":
